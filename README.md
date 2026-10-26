@@ -241,7 +241,7 @@ The FIFO memory is not cleared after a packet. Only its pointers and occupancy c
 
 The supplied traffic generator sends four-flit packets: one header, two body flits, and one tail. With the default configuration, each flit contains a 16-bit payload and a 2-bit type identifier. Header, body, and tail identifiers are `01`, `00`, and `10`, respectively.
 
-![Packet structure and destination capture](docs/diagrams/additions/packet-format.svg)
+![Packet structure and destination capture](docs/diagrams/additions/packet-format.png)
 
 In a header, bits `[15:8]` contain the pattern byte chosen by `Node.v`, bits `[7:4]` contain the source ID, and bits `[3:0]` contain the destination ID. The router uses the destination to select the next hop; it does not decode the pattern byte or source ID for routing. The source/destination interpretation applies to headers only.
 
@@ -251,7 +251,7 @@ The destination register is enabled by `flitID_mem[0] == 2'b01` and captures `fi
 
 The FIFO controller receives a complete packet before requesting an output. Its ten states coordinate upstream admission, writing, output allocation, downstream admission, and reading.
 
-![FIFO controller states, transition conditions, and output decoding](docs/diagrams/additions/fifo-fsm.svg)
+![FIFO controller states, transition conditions, and output decoding](docs/diagrams/additions/fifo-fsm.png)
 
 `WRI` asserts the internal datapath reset. `GAI` acknowledges the upstream request, and `WAIT1` and `WAIT2` provide two intervening states before `RDI` enables writing. The controller exits `RDI` when the incoming flit type is `10`, then holds `reqA` in `RP` until an allocation grant arrives.
 
@@ -261,7 +261,7 @@ The controller has no explicit reset input. This sequence describes operation af
 
 ### Illustrative handshake timing
 
-![Illustrative timing, not a simulation waveform](docs/diagrams/additions/handshake-timing.svg)
+![Illustrative timing, not a simulation waveform](docs/diagrams/additions/handshake-timing.png)
 
 This drawing summarizes signal levels across symbolic state intervals. It is not a waveform captured from simulation and must not be used to infer latency, cycle counts, or setup/hold timing. `RDI`, `RP`, `GRO`, `WAO`, and `SDO` can persist for multiple cycles. External input transitions are shown schematically at state boundaries; the corresponding condition must be present for the controller to advance at a rising clock edge.
 
@@ -273,7 +273,7 @@ The upstream `reqI/ackI` exchange admits a packet. `reqA/ackA` obtains an output
 
 `NoC_TB.v` starts traffic mode `01` at node 8, mode `10` at node 6, and mode `11` at node 7 on consecutive stimulus steps. Their destination IDs are defined by the corresponding headers in `Node.v`. With `SIZE = 16`, router coordinates are `x = ID % 4` and `y = ID / 4`.
 
-![Expected paths of the three test packets](docs/diagrams/additions/traffic-paths.svg)
+![Expected paths of the three test packets](docs/diagrams/additions/traffic-paths.png)
 
 | Packet | Expected router sequence | Output-port sequence |
 | --- | --- | --- |
