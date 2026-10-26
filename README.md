@@ -4,6 +4,26 @@ A parameterized, packet-switched Network-on-Chip (NoC) built as a 4×4 two-dimen
 
 ![Complete 4×4 NoC](docs/diagrams/noc-system.svg)
 
+---
+
+## Table of Contents
+
+- [Design Summary](#design-summary)
+- [System Architecture](#system-architecture)
+- [Router Microarchitecture](#router-microarchitecture)
+  - [Input Buffer and Packet Lifecycle](#input-buffer-and-packet-lifecycle)
+  - [Flit Format](#flit-format)
+  - [XY Routing](#xy-routing)
+  - [Switch Allocation and Datapath](#switch-allocation-and-datapath)
+- [Handshake Behavior](#handshake-behavior)
+- [Repository Layout](#repository-layout)
+- [Simulation](#simulation)
+- [Configuration](#configuration)
+- [Synthesis Status and Known Limitations](#synthesis-status-and-known-limitations)
+- [Reproducing the Report Scenario](#reproducing-the-report-scenario)
+
+---
+
 ## Design summary
 
 | Property | Default configuration |
@@ -212,4 +232,4 @@ The FIFO memory is not cleared after a packet. Only its pointers and occupancy c
 
 ## Reproducing the report scenario
 
-`NoC_TB.v` initializes every `startMod` entry to zero, pulses reset, and launches traffic modes on nodes 8, 6, and 7. The corresponding headers in `Node.v` encode destinations 1, 4, and 5. Inspect each destination router's Local output data and handshake signals to confirm delivery. The original waveform screenshot and Persian design discussion are preserved in the project report.
+`NoC_TB.v` initializes every `startMod` entry to zero, pulses reset, and launches traffic modes on nodes 8, 6, and 7. The corresponding headers in `Node.v` encode destinations 1, 4, and 5. Inspect each destination router's Local output data and handshake signals to confirm delivery.
