@@ -20,7 +20,14 @@ A parameterized, packet-switched Network-on-Chip (NoC) built as a 4×4 two-dimen
 - [Simulation](#simulation)
 - [Configuration](#configuration)
 - [Synthesis Status and Known Limitations](#synthesis-status-and-known-limitations)
-- [Reproducing the Report Scenario](#reproducing-the-report-scenario)
+- [Packet Transfer and Control](#packet-transfer-and-control)
+  - [Packet structure and destination capture](#packet-structure-and-destination-capture)
+  - [FIFO controller](#fifo-controller)
+  - [Illustrative handshake timing](#illustrative-handshake-timing)
+- [Example Traffic and Verification](#example-traffic-and-verification)
+  - [Concurrent traffic scenario](#concurrent-traffic-scenario)
+  - [Expected packet contents](#expected-packet-contents)
+  - [Verification status and observation points](#verification-status-and-observation-points)
 
 ---
 
@@ -209,8 +216,6 @@ The included tests cover three levels:
 
 ## Configuration
 
-The principal parameters are `DATA_WIDTH`, `DEPTH`, `SIZE`, and `ROUTER_ID`. The supplied implementation and traffic format are specifically validated in the report for `DATA_WIDTH = 16`, `DEPTH = 4`, and `SIZE = 16`.
-
 `NoC.v` derives its mesh dimension using `$sqrt(SIZE)`, while `RoutingUnit.v` uses `$clog2(SIZE)` as the coordinate divisor. Both evaluate to four when `SIZE = 16`; they are not equivalent for arbitrary sizes. Treat the current top level as a 4×4 design unless both expressions and destination widths are revised together.
 
 ## Synthesis status and known limitations
@@ -230,6 +235,75 @@ The router datapath is written as RTL, but the complete repository should be tre
 
 The FIFO memory is not cleared after a packet. Only its pointers and occupancy control are recycled, so stale or unknown values can appear on internal data wires before a valid request. Consumers must qualify data with the handshake signals.
 
-## Reproducing the report scenario
+## Packet Transfer and Control
 
-`NoC_TB.v` initializes every `startMod` entry to zero, pulses reset, and launches traffic modes on nodes 8, 6, and 7. The corresponding headers in `Node.v` encode destinations 1, 4, and 5. Inspect each destination router's Local output data and handshake signals to confirm delivery.
+### Packet structure and destination capture
+
+The supplied traffic generator sends four-flit packets: one header, two body flits, and one tail. With the default configuration, each flit contains a 16-bit payload and a 2-bit type identifier. Header, body, and tail identifiers are `01`, `00`, and `10`, respectively.
+
+![Packet structure and destination capture](docs/diagrams/additions/packet-format.svg)
+
+In a header, bits `[15:8]` contain the pattern byte chosen by `Node.v`, bits `[7:4]` contain the source ID, and bits `[3:0]` contain the destination ID. The router uses the destination to select the next hop; it does not decode the pattern byte or source ID for routing. The source/destination interpretation applies to headers only.
+
+The destination register is enabled by `flitID_mem[0] == 2'b01` and captures `fifo_mem[0][3:0]` on a rising clock edge when enabled and not reset. This is a memory-slot-zero check, not a check of the current read pointer. Memory contents are retained between packets, so the enable can remain asserted while a previous header remains in slot zero; it is not a one-cycle header-arrival pulse.
+
+### FIFO controller
+
+The FIFO controller receives a complete packet before requesting an output. Its ten states coordinate upstream admission, writing, output allocation, downstream admission, and reading.
+
+![FIFO controller states, transition conditions, and output decoding](docs/diagrams/additions/fifo-fsm.svg)
+
+`WRI` asserts the internal datapath reset. `GAI` acknowledges the upstream request, and `WAIT1` and `WAIT2` provide two intervening states before `RDI` enables writing. The controller exits `RDI` when the incoming flit type is `10`, then holds `reqA` in `RP` until an allocation grant arrives.
+
+`GRO` raises the downstream request. Once `ackO` is high, `WAO` lowers that request and waits for the acknowledgement to fall. Reading begins in `WAIT3` and continues in `SDO` until the registered output flit type equals `10`. The controller then returns to `WRI`. All outputs not listed as high in the diagram are low.
+
+The controller has no explicit reset input. This sequence describes operation after entry into `WRI`; it does not establish deterministic hardware startup. Although `full` and `empty` are controller inputs, they do not affect its state transitions. The datapath separately guards writes with `!full` and reads with `!empty`.
+
+### Illustrative handshake timing
+
+![Illustrative timing, not a simulation waveform](docs/diagrams/additions/handshake-timing.svg)
+
+This drawing summarizes signal levels across symbolic state intervals. It is not a waveform captured from simulation and must not be used to infer latency, cycle counts, or setup/hold timing. `RDI`, `RP`, `GRO`, `WAO`, and `SDO` can persist for multiple cycles. External input transitions are shown schematically at state boundaries; the corresponding condition must be present for the controller to advance at a rising clock edge.
+
+The upstream `reqI/ackI` exchange admits a packet. `reqA/ackA` obtains an output allocation, which is retained during forwarding by keeping `reqA` asserted. The downstream `reqO/ackO` exchange finishes before the FIFO starts draining: `ackO` is not a per-flit valid signal. Packet contents must be interpreted using the protocol state and flit identifiers rather than by treating every visible data value as a new flit.
+
+## Example Traffic and Verification
+
+### Concurrent traffic scenario
+
+`NoC_TB.v` starts traffic mode `01` at node 8, mode `10` at node 6, and mode `11` at node 7 on consecutive stimulus steps. Their destination IDs are defined by the corresponding headers in `Node.v`. With `SIZE = 16`, router coordinates are `x = ID % 4` and `y = ID / 4`.
+
+![Expected paths of the three test packets](docs/diagrams/additions/traffic-paths.svg)
+
+| Packet | Expected router sequence | Output-port sequence |
+| --- | --- | --- |
+| 8 → 1 | 8 → 9 → 5 → 1 | East → North → North → Local |
+| 6 → 4 | 6 → 5 → 4 | West → West → Local |
+| 7 → 5 | 7 → 6 → 5 | West → West → Local |
+
+The paths follow the X coordinate first and the Y coordinate second. Sharing a router does not necessarily imply output contention. At router 6, the packet injected locally for node 4 and the packet arriving from the East for node 5 both need the West output. If both are eligible when allocation occurs, Local has priority over East. An already active transfer is intended to retain its grant through `BusyChecker`; exact ordering depends on arrival and allocation timing.
+
+### Expected packet contents
+
+Each value below is an 18-bit flit written as five hexadecimal digits. The type bits are included. These are expected values derived from the literals in `Node.v`, not measured receiver outputs.
+
+| Source → destination | Header (`01`) | Body 1 (`00`) | Body 2 (`00`) | Tail (`10`) |
+| --- | --- | --- | --- | --- |
+| 8 → 1 | `18'h12281` | `18'h0A236` | `18'h0365A` | `18'h2F2AF` |
+| 6 → 4 | `18'h18264` | `18'h0AF74` | `18'h0705E` | `18'h2928B` |
+| 7 → 5 | `18'h10275` | `18'h0B3F7` | `18'h0B7DA` | `18'h2F3EF` |
+
+### Verification status and observation points
+
+The paths and packet contents above were checked against the source. No new HDL simulation or synthesis run accompanies these additions. The supplied testbench is stimulus-driven and does not contain a self-checking packet scoreboard. Neither the diagrams nor the expected values establish successful delivery.
+
+For a simulator run, inspect `data_out_LS` and `reqOut_LS` on the destination router, together with its local acknowledgement `ackOut_LS`. Under `NoC_TB.NoC_UT`, the three destination router instances are:
+
+| Destination | Relative router instance path |
+| --- | --- |
+| 1 | `GENERATING_NODE_ROUTERS_IN_ROWS[0].GENERATING_NODE_ROUTERS_IN_COLUMNS[1].node_routers.router` |
+| 4 | `GENERATING_NODE_ROUTERS_IN_ROWS[1].GENERATING_NODE_ROUTERS_IN_COLUMNS[0].node_routers.router` |
+| 5 | `GENERATING_NODE_ROUTERS_IN_ROWS[1].GENERATING_NODE_ROUTERS_IN_COLUMNS[1].node_routers.router` |
+
+Simulator hierarchy notation may vary. For a valid packet window, verify the header destination, the exact ordered flit values, and a single tail. Check that each packet is delivered once to its intended local interface. Capture an English-labeled waveform from that run before claiming a simulation pass. Data outside a packet window can be stale, unknown, or high impedance and should not be counted as additional traffic.
+
